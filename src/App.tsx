@@ -1,86 +1,263 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useMemo, useState } from "react";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+
+function basename(path: string): string {
+    const parts = path.split("/");
+    return parts[parts.length - 1] || path;
+}
 
 function App() {
     const [inputPath, setInputPath] = useState("");
-    const [outputPath, setOutputPath] = useState("");
+    const [inputName, setInputName] = useState("未選択");
+    const [outputDir, setOutputDir] = useState("");
+    const [outputDirText, setOutputDirText] = useState("未選択");
+
+    const [previewPath, setPreviewPath] = useState("");
     const [log, setLog] = useState("");
 
+    const previewUrl = useMemo(() => {
+        if (!previewPath) {
+            return "";
+        }
+        // ローカルファイルをWebViewで表示するためのURLに変換
+        return `${convertFileSrc(previewPath)}?t=${Date.now()}`;
+    }, [previewPath]);
+
     const pickInput = async () => {
-        const selected = await open({
-            multiple: false,
-            directory: false,
-            filters: [
-                {
-                    name: "Images",
-                    extensions: ["jpg", "jpeg", "png"],
-                },
-            ],
-        });
-
-        if (typeof selected === "string") {
-            setInputPath(selected);
+        let selected: string | string[] | null;
+        try {
+            selected = await open({
+                multiple: false,
+                directory: false,
+                filters: [
+                    {
+                        name: "Images",
+                        extensions: ["jpg", "jpeg", "png"],
+                    },
+                ],
+            });
+        } catch (e) {
+            setLog(`画像選択ダイアログの表示に失敗: ${String(e)}`);
+            return;
         }
-    };
 
-    const pickOutput = async () => {
-        const selected = await open({
-            multiple: false,
-            directory: false,
-            defaultPath: "output.jpg",
-        });
-
-        if (typeof selected === "string") {
-            setOutputPath(selected);
+        if (typeof selected !== "string") {
+            return;
         }
-    };
 
-    const run = async () => {
-        setLog("Running...");
+        setInputPath(selected);
+        setInputName(basename(selected));
+
+        setLog("プレビュー生成中...");
 
         try {
-            const result = await invoke<string>("run_python", {
-                inputPath,
-                outputPath,
+            const generated = await invoke<string>("generate_preview", {
+                inputPath: selected,
             });
-
-            setLog(result);
+            setPreviewPath(generated);
+            setLog("プレビュー生成完了");
         } catch (e) {
             setLog(String(e));
         }
     };
 
+    const pickOutputDir = async () => {
+        let selected: string | string[] | null;
+        try {
+            selected = await open({
+                multiple: false,
+                directory: true,
+            });
+        } catch (e) {
+            setLog(`出力先選択ダイアログの表示に失敗: ${String(e)}`);
+            return;
+        }
+
+        if (typeof selected !== "string") {
+            return;
+        }
+
+        setOutputDir(selected);
+        setOutputDirText(selected);
+    };
+
+    const exportImage = async () => {
+        if (!inputPath || !outputDir) {
+            return;
+        }
+
+        setLog("出力中...");
+
+        try {
+            const outPath = await invoke<string>("export_image", {
+                inputPath,
+                outputDir,
+            });
+
+            setPreviewPath(outPath);
+            setLog(`出力完了: ${outPath}`);
+        } catch (e) {
+            setLog(String(e));
+        }
+    };
+
+    const leftTitleStyle: React.CSSProperties = {
+        width: "100%",
+        textAlign: "left",
+        fontSize: 14,
+        fontWeight: 600,
+    };
+
+    const leftCenterBlockStyle: React.CSSProperties = {
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 10,
+    };
+
+    const actionButtonStyle: React.CSSProperties = {
+        width: 160,
+        height: 56,
+        fontSize: 15,
+        fontWeight: 700,
+        borderRadius: 10,
+        cursor: "pointer",
+    };
+
+    const statusTextStyle: React.CSSProperties = {
+        width: "100%",
+        textAlign: "center",
+        fontSize: 12,
+        color: "#444",
+        wordBreak: "break-all",
+    };
+
     return (
-        <div style={{ padding: 16, fontFamily: "sans-serif" }}>
-            <h1>EXIF adder for mac</h1>
-
-            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                <button onClick={pickInput}>画像を選択</button>
-                <div>{inputPath || "(未選択)"}</div>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                <button onClick={pickOutput}>出力先を選択</button>
-                <div>{outputPath || "(未選択)"}</div>
-            </div>
-
-            <button
-                onClick={run}
-                disabled={!inputPath || !outputPath}
-            >
-                実行
-            </button>
-
-            <pre
+        <div
+            style={{
+                display: "flex",
+                height: "100vh",
+                fontFamily: "sans-serif",
+            }}
+        >
+            {/* 左側 */}
+            <div
                 style={{
-                    marginTop: 16,
-                    background: "#f5f5f5",
-                    padding: 12,
+                    width: 280,
+                    padding: 20,
+                    borderRight: "1px solid #ddd",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                    gap: 26,
                 }}
             >
-                {log}
-            </pre>
+                {/* 1. 画像を選択 */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={leftTitleStyle}>
+                        1. 画像を選択
+                    </div>
+
+                    <div style={leftCenterBlockStyle}>
+                        <button
+                            onClick={pickInput}
+                            style={actionButtonStyle}
+                        >
+                            画像を選択
+                        </button>
+
+                        <div style={statusTextStyle}>
+                            {inputName}
+                        </div>
+                    </div>
+                </div>
+
+                {/* 2. 出力先フォルダを選択 */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={leftTitleStyle}>
+                        2. 出力先フォルダを選択
+                    </div>
+
+                    <div style={leftCenterBlockStyle}>
+                        <button
+                            onClick={pickOutputDir}
+                            style={actionButtonStyle}
+                        >
+                            出力先選択
+                        </button>
+
+                        <div style={statusTextStyle}>
+                            {outputDirText}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* 右側 */}
+            <div
+                style={{
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    padding: 20,
+                }}
+            >
+                <div
+                    style={{
+                        flex: 1,
+                        border: "1px solid #ccc",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        backgroundColor: "#f8f8f8",
+                        overflow: "hidden",
+                    }}
+                >
+                    {previewUrl ? (
+                        <img
+                            src={previewUrl}
+                            alt="preview"
+                            style={{
+                                maxWidth: "100%",
+                                maxHeight: "100%",
+                                objectFit: "contain",
+                            }}
+                        />
+                    ) : (
+                        <div>プレビューなし</div>
+                    )}
+                </div>
+
+                <button
+                    onClick={exportImage}
+                    disabled={!inputPath || !outputDir}
+                    style={{
+                        marginTop: 16,
+                        height: 44,
+                        fontSize: 16,
+                        fontWeight: 800,
+                        borderRadius: 10,
+                        cursor: "pointer",
+                    }}
+                >
+                    出力
+                </button>
+
+                <pre
+                    style={{
+                        marginTop: 12,
+                        fontSize: 12,
+                        background: "#f5f5f5",
+                        padding: 8,
+                        height: 70,
+                        overflow: "auto",
+                    }}
+                >
+                    {log}
+                </pre>
+            </div>
         </div>
     );
 }
