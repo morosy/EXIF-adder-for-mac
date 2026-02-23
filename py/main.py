@@ -1,21 +1,58 @@
 import sys
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 import exifread
 
+EXIF_TAG_MAKE = 271
+EXIF_TAG_MODEL = 272
+EXIF_TAG_ORIENTATION = 274
+EXIF_TAG_DATETIME = 306
+EXIF_TAG_DATETIME_ORIGINAL = 36867
+
+def _build_summary(dt: str, make: str, model: str) -> str:
+    camera = (make + " " + model).strip() if (make or model) else "Unknown Camera"
+    return f"{dt}  |  {camera}"
+
 def read_exif_summary(image_path: Path) -> str:
+    # Prefer Pillow's EXIF parser for common JPEG/HEIC-converted JPEG files.
+    try:
+        with Image.open(image_path) as img:
+            exif = img.getexif()
+            if exif:
+                dt = str(
+                    exif.get(EXIF_TAG_DATETIME_ORIGINAL)
+                    or exif.get(EXIF_TAG_DATETIME)
+                    or "Unknown Date"
+                )
+                make = str(exif.get(EXIF_TAG_MAKE, "") or "")
+                model = str(exif.get(EXIF_TAG_MODEL, "") or "")
+                return _build_summary(dt, make, model)
+    except Exception:
+        pass
+
+    # Fallback for files Pillow cannot parse metadata from.
     with open(image_path, "rb") as f:
         tags = exifread.process_file(f, details=False)
 
     dt = str(tags.get("EXIF DateTimeOriginal", "Unknown Date"))
     make = str(tags.get("Image Make", ""))
     model = str(tags.get("Image Model", ""))
-
-    camera = (make + " " + model).strip() if (make or model) else "Unknown Camera"
-    return f"{dt}  |  {camera}"
+    return _build_summary(dt, make, model)
 
 def add_frame_and_text(input_path: Path, output_path: Path):
-    img = Image.open(input_path).convert("RGB")
+    exif_bytes = None
+    with Image.open(input_path) as src:
+        # Apply EXIF orientation before drawing to avoid sideways previews.
+        img = ImageOps.exif_transpose(src).convert("RGB")
+        try:
+            exif = src.getexif()
+            if exif:
+                # The pixel data is already transposed, so reset orientation metadata.
+                exif[EXIF_TAG_ORIENTATION] = 1
+                exif_bytes = exif.tobytes()
+        except Exception:
+            exif_bytes = src.info.get("exif")
+
     w, h = img.size
 
     pad_lr = int(max(w, h) * 0.04)
@@ -48,7 +85,10 @@ def add_frame_and_text(input_path: Path, output_path: Path):
     draw.text((x, y), text, fill=(0, 0, 0), font=font)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(output_path, quality=95)
+    save_kwargs = {"quality": 95}
+    if exif_bytes:
+        save_kwargs["exif"] = exif_bytes
+    canvas.save(output_path, **save_kwargs)
 
 def main():
     if len(sys.argv) < 3:

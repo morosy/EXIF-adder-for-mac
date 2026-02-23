@@ -219,6 +219,9 @@ function App() {
                         <img
                             src={previewUrl}
                             alt="preview"
+                            onError={() => {
+                                setLog(`プレビュー表示に失敗しました: ${previewPath}`);
+                            }}
                             style={{
                                 maxWidth: "100%",
                                 maxHeight: "100%",
