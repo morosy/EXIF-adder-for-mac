@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
@@ -15,16 +15,30 @@ function basename(path: string): string {
     return parts[parts.length - 1] || path;
 }
 
+function stemname(path: string): string {
+    const base = basename(path);
+    const dot = base.lastIndexOf(".");
+    if (dot <= 0) {
+        return base;
+    }
+    return base.slice(0, dot);
+}
+
 function App() {
     const [inputPath, setInputPath] = useState("");
     const [inputName, setInputName] = useState("未選択");
+
     const [outputDir, setOutputDir] = useState("");
     const [outputDirText, setOutputDirText] = useState("未選択");
+
+    const [outputName, setOutputName] = useState(""); // 拡張子なし推奨（.jpgは自動付与）
 
     const [aspect, setAspect] = useState<AspectOption>("3:4");
 
     const [previewPath, setPreviewPath] = useState("");
     const [log, setLog] = useState("");
+
+    const lastPreviewRequestId = useRef(0);
 
     const previewUrl = useMemo(() => {
         if (!previewPath) {
@@ -32,6 +46,36 @@ function App() {
         }
         return `${convertFileSrc(previewPath)}?t=${Date.now()}`;
     }, [previewPath]);
+
+    const runPreview = async (path: string, aspectValue: AspectOption) => {
+        const requestId = ++lastPreviewRequestId.current;
+
+        setLog("プレビュー生成中...");
+
+        try {
+            const generated = await invoke<PythonRunResult>("generate_preview", {
+                inputPath: path,
+                aspect: aspectValue,
+            });
+
+            // 途中で別のリクエストが走っていたら古い結果は捨てる
+            if (requestId !== lastPreviewRequestId.current) {
+                return;
+            }
+
+            setPreviewPath(generated.output_path);
+            setLog(generated.log);
+
+            if (!generated.exif_ok) {
+                window.alert("EXIF情報を読み込めませんでした（N/Aとして表示します）。");
+            }
+        } catch (e) {
+            if (requestId !== lastPreviewRequestId.current) {
+                return;
+            }
+            setLog(String(e));
+        }
+    };
 
     const pickInput = async () => {
         let selected: string | string[] | null;
@@ -58,23 +102,11 @@ function App() {
 
         setInputPath(selected);
         setInputName(basename(selected));
-        setLog("プレビュー生成中...");
 
-        try {
-            const generated = await invoke<PythonRunResult>("generate_preview", {
-                inputPath: selected,
-                aspect,
-            });
+        // デフォルトの出力ファイル名（拡張子なし）
+        setOutputName(stemname(selected));
 
-            setPreviewPath(generated.output_path);
-            setLog(generated.log);
-
-            if (!generated.exif_ok) {
-                window.alert("EXIF情報を読み込めませんでした（N/Aとして表示します）。");
-            }
-        } catch (e) {
-            setLog(String(e));
-        }
+        await runPreview(selected, aspect);
     };
 
     const pickOutputDir = async () => {
@@ -109,6 +141,7 @@ function App() {
             const out = await invoke<PythonRunResult>("export_image", {
                 inputPath,
                 outputDir,
+                outputName: outputName.trim() ? outputName.trim() : null,
                 aspect,
             });
 
@@ -122,6 +155,23 @@ function App() {
             setLog(String(e));
         }
     };
+
+    // ✅ 機能修正：縦横比を更新したらプレビューも更新
+    useEffect(() => {
+        if (!inputPath) {
+            return;
+        }
+
+        // 連打時に無駄に生成しないよう軽くデバウンス
+        const timer = window.setTimeout(() => {
+            void runPreview(inputPath, aspect);
+        }, 200);
+
+        return () => {
+            window.clearTimeout(timer);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [aspect]);
 
     const leftTitleStyle: React.CSSProperties = {
         width: "100%",
@@ -163,6 +213,16 @@ function App() {
         borderRadius: 10,
         padding: "0 10px",
         cursor: "pointer",
+    };
+
+    const inputStyle: React.CSSProperties = {
+        width: 200,
+        height: 44,
+        fontSize: 14,
+        fontWeight: 600,
+        borderRadius: 10,
+        padding: "0 10px",
+        boxSizing: "border-box",
     };
 
     return (
@@ -250,6 +310,28 @@ function App() {
                         </div>
                     </div>
                 </div>
+
+                {/* 4. 出力ファイル名 */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={leftTitleStyle}>
+                        4. 出力ファイル名
+                    </div>
+
+                    <div style={leftCenterBlockStyle}>
+                        <input
+                            value={outputName}
+                            onChange={(e) => {
+                                setOutputName(e.target.value);
+                            }}
+                            placeholder="例: DSC_3294"
+                            style={inputStyle}
+                        />
+
+                        <div style={statusTextStyle}>
+                            ※「.jpg」は自動で付与されます
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {/* 右側 */}
@@ -311,7 +393,7 @@ function App() {
                         fontSize: 12,
                         background: "#f5f5f5",
                         padding: 8,
-                        height: 120,
+                        height: 140,
                         overflow: "auto",
                         whiteSpace: "pre-wrap",
                     }}
