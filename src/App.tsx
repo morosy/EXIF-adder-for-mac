@@ -8,7 +8,7 @@ type PythonRunResult = {
     exif_ok: boolean;
 };
 
-type AspectOption = "16:9" | "3:4" | "4:5" | "1:1";
+type AspectOption = "16:9" | "9:16" | "4:3" | "3:4" | "5:4" | "4:5" | "1:1";
 
 function basename(path: string): string {
     const parts = path.split("/");
@@ -31,7 +31,7 @@ function App() {
     const [outputDir, setOutputDir] = useState("");
     const [outputDirText, setOutputDirText] = useState("未選択");
 
-    const [outputName, setOutputName] = useState(""); // 拡張子なし推奨（.jpgは自動付与）
+    const [outputName, setOutputName] = useState("");
 
     const [aspect, setAspect] = useState<AspectOption>("3:4");
 
@@ -58,7 +58,6 @@ function App() {
                 aspect: aspectValue,
             });
 
-            // 途中で別のリクエストが走っていたら古い結果は捨てる
             if (requestId !== lastPreviewRequestId.current) {
                 return;
             }
@@ -102,8 +101,6 @@ function App() {
 
         setInputPath(selected);
         setInputName(basename(selected));
-
-        // デフォルトの出力ファイル名（拡張子なし）
         setOutputName(stemname(selected));
 
         await runPreview(selected, aspect);
@@ -156,13 +153,11 @@ function App() {
         }
     };
 
-    // ✅ 機能修正：縦横比を更新したらプレビューも更新
     useEffect(() => {
         if (!inputPath) {
             return;
         }
 
-        // 連打時に無駄に生成しないよう軽くデバウンス
         const timer = window.setTimeout(() => {
             void runPreview(inputPath, aspect);
         }, 200);
@@ -300,7 +295,10 @@ function App() {
                             style={selectStyle}
                         >
                             <option value="16:9">16:9</option>
+                            <option value="9:16">9:16</option>
+                            <option value="4:3">4:3</option>
                             <option value="3:4">3:4</option>
+                            <option value="5:4">5:4</option>
                             <option value="4:5">4:5</option>
                             <option value="1:1">1:1</option>
                         </select>

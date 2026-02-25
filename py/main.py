@@ -10,7 +10,10 @@ EXIF_TAG_ORIENTATION = 274
 
 ASPECT_RATIOS = {
     "16:9": (16, 9),
+    "9:16": (9, 16),
+    "4:3": (4, 3),
     "3:4": (3, 4),
+    "5:4": (5, 4),
     "4:5": (4, 5),
     "1:1": (1, 1),
 }
@@ -193,11 +196,9 @@ def _apply_aspect_padding(image: Image.Image, aspect: str | None) -> Image.Image
         return image
 
     if current_ratio > target_ratio:
-        # Too wide -> increase height
         new_h = int(round(w / target_ratio))
         new_w = w
     else:
-        # Too tall -> increase width
         new_w = int(round(h * target_ratio))
         new_h = h
 
@@ -266,7 +267,6 @@ def add_frame_and_text(input_path: Path, output_path: Path, aspect: str | None):
 
     draw.text((x, y), overlay_text, fill=(0, 0, 0), font=font)
 
-    # --- aspect padding (no cropping) ---
     if aspect:
         print(f"[ASPECT] Requested: {aspect}")
     else:
@@ -282,7 +282,6 @@ def add_frame_and_text(input_path: Path, output_path: Path, aspect: str | None):
 
 
 def _parse_aspect(argv: list[str]) -> str | None:
-    # Accept: --aspect 16:9
     if "--aspect" not in argv:
         return None
     i = argv.index("--aspect")
@@ -293,7 +292,7 @@ def _parse_aspect(argv: list[str]) -> str | None:
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python main.py <input_image> <output_image> [--aspect 16:9|3:4|4:5|1:1]")
+        print("Usage: python main.py <input_image> <output_image> [--aspect 16:9|9:16|4:3|3:4|5:4|4:5|1:1]")
         sys.exit(1)
 
     input_path = Path(sys.argv[1])
@@ -301,7 +300,6 @@ def main():
     aspect = _parse_aspect(sys.argv[3:])
 
     add_frame_and_text(input_path, output_path, aspect)
-
     print(f"[OK] Output: {output_path}")
 
 
