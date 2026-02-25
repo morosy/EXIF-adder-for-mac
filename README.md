@@ -2,6 +2,15 @@
 ## 起動方法
 `npm run tauri dev`
 
+```zsh
+> exif-adder-for-mac@0.1.0 tauri
+> tauri dev
+
+failed to run 'cargo metadata' command to get workspace directory: failed to run command cargo metadata --no-deps --format-version 1: No such file or directory (os error 2)
+       Error failed to run 'cargo metadata' command to get workspace directory: failed to run command cargo metadata --no-deps --format-version 1: No such file or directory (os error 2)
+```
+と表示された場合は以下を実行  
+`source "$HOME/.cargo/env"`
 
 # Tauri + React + Typescript
 
