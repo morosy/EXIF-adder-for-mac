@@ -8,6 +8,13 @@ import exifread
 
 EXIF_TAG_ORIENTATION = 274
 
+ASPECT_RATIOS = {
+    "16:9": (16, 9),
+    "3:4": (3, 4),
+    "4:5": (4, 5),
+    "1:1": (1, 1),
+}
+
 
 def format_date(date_string):
     if not date_string or " " not in str(date_string):
@@ -167,7 +174,48 @@ def read_exif_selected(image_path: Path) -> dict:
         }
 
 
-def add_frame_and_text(input_path: Path, output_path: Path):
+def _apply_aspect_padding(image: Image.Image, aspect: str | None) -> Image.Image:
+    if not aspect:
+        return image
+
+    if aspect not in ASPECT_RATIOS:
+        print(f"[ASPECT] Unknown aspect: {aspect} (ignored)")
+        return image
+
+    aw, ah = ASPECT_RATIOS[aspect]
+    target_ratio = aw / ah
+
+    w, h = image.size
+    current_ratio = w / h
+
+    if abs(current_ratio - target_ratio) < 1e-6:
+        print(f"[ASPECT] Already target ratio: {aspect}")
+        return image
+
+    if current_ratio > target_ratio:
+        # Too wide -> increase height
+        new_h = int(round(w / target_ratio))
+        new_w = w
+    else:
+        # Too tall -> increase width
+        new_w = int(round(h * target_ratio))
+        new_h = h
+
+    if new_w < w:
+        new_w = w
+    if new_h < h:
+        new_h = h
+
+    print(f"[ASPECT] Apply {aspect}: ({w}x{h}) -> ({new_w}x{new_h})")
+
+    canvas = Image.new("RGB", (new_w, new_h), (255, 255, 255))
+    x = (new_w - w) // 2
+    y = (new_h - h) // 2
+    canvas.paste(image, (x, y))
+    return canvas
+
+
+def add_frame_and_text(input_path: Path, output_path: Path, aspect: str | None):
     exif_bytes = None
     with Image.open(input_path) as src:
         img = ImageOps.exif_transpose(src).convert("RGB")
@@ -198,10 +246,10 @@ def add_frame_and_text(input_path: Path, output_path: Path):
     new_w = w + pad_lr * 2
     new_h = h + pad_top + pad_bottom
 
-    canvas = Image.new("RGB", (new_w, new_h), (255, 255, 255))
-    canvas.paste(img, (pad_lr, pad_top))
+    framed = Image.new("RGB", (new_w, new_h), (255, 255, 255))
+    framed.paste(img, (pad_lr, pad_top))
 
-    draw = ImageDraw.Draw(canvas)
+    draw = ImageDraw.Draw(framed)
 
     font_size = max(12, int(max(w, h) * 0.028))
     try:
@@ -218,22 +266,41 @@ def add_frame_and_text(input_path: Path, output_path: Path):
 
     draw.text((x, y), overlay_text, fill=(0, 0, 0), font=font)
 
+    # --- aspect padding (no cropping) ---
+    if aspect:
+        print(f"[ASPECT] Requested: {aspect}")
+    else:
+        print("[ASPECT] Requested: (none)")
+
+    final_img = _apply_aspect_padding(framed, aspect)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     save_kwargs = {"quality": 95}
     if exif_bytes:
         save_kwargs["exif"] = exif_bytes
-    canvas.save(output_path, **save_kwargs)
+    final_img.save(output_path, **save_kwargs)
+
+
+def _parse_aspect(argv: list[str]) -> str | None:
+    # Accept: --aspect 16:9
+    if "--aspect" not in argv:
+        return None
+    i = argv.index("--aspect")
+    if i + 1 >= len(argv):
+        return None
+    return argv[i + 1]
 
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python main.py <input_image> <output_image>")
+        print("Usage: python main.py <input_image> <output_image> [--aspect 16:9|3:4|4:5|1:1]")
         sys.exit(1)
 
     input_path = Path(sys.argv[1])
     output_path = Path(sys.argv[2])
+    aspect = _parse_aspect(sys.argv[3:])
 
-    add_frame_and_text(input_path, output_path)
+    add_frame_and_text(input_path, output_path, aspect)
 
     print(f"[OK] Output: {output_path}")
 

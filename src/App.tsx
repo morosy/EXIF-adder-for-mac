@@ -8,6 +8,8 @@ type PythonRunResult = {
     exif_ok: boolean;
 };
 
+type AspectOption = "16:9" | "3:4" | "4:5" | "1:1";
+
 function basename(path: string): string {
     const parts = path.split("/");
     return parts[parts.length - 1] || path;
@@ -18,6 +20,8 @@ function App() {
     const [inputName, setInputName] = useState("未選択");
     const [outputDir, setOutputDir] = useState("");
     const [outputDirText, setOutputDirText] = useState("未選択");
+
+    const [aspect, setAspect] = useState<AspectOption>("3:4");
 
     const [previewPath, setPreviewPath] = useState("");
     const [log, setLog] = useState("");
@@ -59,6 +63,7 @@ function App() {
         try {
             const generated = await invoke<PythonRunResult>("generate_preview", {
                 inputPath: selected,
+                aspect,
             });
 
             setPreviewPath(generated.output_path);
@@ -104,6 +109,7 @@ function App() {
             const out = await invoke<PythonRunResult>("export_image", {
                 inputPath,
                 outputDir,
+                aspect,
             });
 
             setPreviewPath(out.output_path);
@@ -147,6 +153,16 @@ function App() {
         fontSize: 12,
         color: "#444",
         wordBreak: "break-all",
+    };
+
+    const selectStyle: React.CSSProperties = {
+        width: 160,
+        height: 44,
+        fontSize: 14,
+        fontWeight: 600,
+        borderRadius: 10,
+        padding: "0 10px",
+        cursor: "pointer",
     };
 
     return (
@@ -205,6 +221,32 @@ function App() {
 
                         <div style={statusTextStyle}>
                             {outputDirText}
+                        </div>
+                    </div>
+                </div>
+
+                {/* 3. 出力画像の縦横比 */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={leftTitleStyle}>
+                        3. 出力画像の縦横比
+                    </div>
+
+                    <div style={leftCenterBlockStyle}>
+                        <select
+                            value={aspect}
+                            onChange={(e) => {
+                                setAspect(e.target.value as AspectOption);
+                            }}
+                            style={selectStyle}
+                        >
+                            <option value="16:9">16:9</option>
+                            <option value="3:4">3:4</option>
+                            <option value="4:5">4:5</option>
+                            <option value="1:1">1:1</option>
+                        </select>
+
+                        <div style={statusTextStyle}>
+                            選択中: {aspect}
                         </div>
                     </div>
                 </div>

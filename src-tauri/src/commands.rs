@@ -53,28 +53,28 @@ fn parse_exif_ok(log: &str) -> bool {
     false
 }
 
-fn run_python(input_path: &str, output_path: &str) -> Result<String, String> {
+fn run_python(input_path: &str, output_path: &str, aspect: Option<String>) -> Result<String, String> {
     let python = python_path();
     let script = script_path();
 
     if !python.is_file() {
-        return Err(format!(
-            "Python runtime not found: {}",
-            python.to_string_lossy()
-        ));
+        return Err(format!("Python runtime not found: {}", python.to_string_lossy()));
     }
 
     if !script.is_file() {
-        return Err(format!(
-            "Python script not found: {}",
-            script.to_string_lossy()
-        ));
+        return Err(format!("Python script not found: {}", script.to_string_lossy()));
     }
 
-    let output = Command::new(&python)
-        .arg(&script)
+    let mut cmd = Command::new(&python);
+    cmd.arg(&script)
         .arg(input_path)
-        .arg(output_path)
+        .arg(output_path);
+
+    if let Some(a) = aspect {
+        cmd.arg("--aspect").arg(a);
+    }
+
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to start python: {e}"))?;
 
@@ -98,7 +98,7 @@ fn run_python(input_path: &str, output_path: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn generate_preview(input_path: String) -> Result<PythonRunResult, String> {
+pub fn generate_preview(input_path: String, aspect: Option<String>) -> Result<PythonRunResult, String> {
     let stem = file_stem_from_path(&input_path);
     let filename = format!("{stem}_preview_{}.jpg", now_millis());
 
@@ -108,7 +108,7 @@ pub fn generate_preview(input_path: String) -> Result<PythonRunResult, String> {
     out.push(filename);
 
     let out_str = out.to_string_lossy().to_string();
-    let log = run_python(&input_path, &out_str)?;
+    let log = run_python(&input_path, &out_str, aspect)?;
     let exif_ok = parse_exif_ok(&log);
 
     Ok(PythonRunResult {
@@ -119,7 +119,11 @@ pub fn generate_preview(input_path: String) -> Result<PythonRunResult, String> {
 }
 
 #[tauri::command]
-pub fn export_image(input_path: String, output_dir: String) -> Result<PythonRunResult, String> {
+pub fn export_image(
+    input_path: String,
+    output_dir: String,
+    aspect: Option<String>,
+) -> Result<PythonRunResult, String> {
     let stem = file_stem_from_path(&input_path);
     let filename = format!("{stem}_exif.jpg");
 
@@ -131,7 +135,7 @@ pub fn export_image(input_path: String, output_dir: String) -> Result<PythonRunR
     let out_path = out_dir.join(filename);
     let out_str = out_path.to_string_lossy().to_string();
 
-    let log = run_python(&input_path, &out_str)?;
+    let log = run_python(&input_path, &out_str, aspect)?;
     let exif_ok = parse_exif_ok(&log);
 
     Ok(PythonRunResult {
