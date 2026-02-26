@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -30,7 +31,6 @@ class ExifTextLayout:
 
 
 def make_layout(base: int) -> ExifTextLayout:
-    # 機種名 > 日付=その他
     model_size = max(14, int(base * 0.032))
     other_size = max(12, int(base * 0.026))
 
@@ -63,10 +63,6 @@ def draw_centered_3lines(
     details_line: str,
     layout: ExifTextLayout,
 ) -> tuple[int, int]:
-    """
-    top_y をテキストブロック上端として、行ボックス基準で3行を中央配置して描画。
-    戻り値： (block_top, block_bottom)
-    """
     draw = ImageDraw.Draw(canvas)
 
     y_model_c = top_y + (layout.lh_model // 2)

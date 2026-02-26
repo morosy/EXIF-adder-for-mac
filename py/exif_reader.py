@@ -110,7 +110,6 @@ def read_exif_selected(image_path: Path) -> dict:
     if exif:
         return _select_exif(exif)
 
-    # fallback
     try:
         with open(image_path, "rb") as f:
             tags = exifread.process_file(f, details=False)
@@ -145,12 +144,6 @@ def exif_ok(selected: dict) -> bool:
 
 
 def build_lines(selected: dict) -> tuple[str, str, str]:
-    """
-    構成：
-    機種名
-    日付
-    焦点距離 ISO F値 SS
-    """
     model = selected.get("Camera Model", "N/A")
     date = selected.get("Date", "N/A")
 
