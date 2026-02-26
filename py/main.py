@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from math import gcd
+from math import gcd, ceil
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from PIL.ExifTags import TAGS
@@ -124,25 +124,6 @@ def _select_exif(exif_data: dict):
     return selected
 
 
-def _build_overlay_text(selected: dict) -> str:
-    date = selected.get("Date", "N/A")
-    model = selected.get("Camera Model", "N/A")
-    iso = selected.get("ISO", "N/A")
-    fl = selected.get("Focal Length (mm)", "N/A")
-    fn = selected.get("F-Number", "N/A")
-    ss = selected.get("Shutter Speed (s)", "N/A")
-
-    parts = []
-    parts.append(date)
-    parts.append(model)
-    parts.append(f"ISO{iso}" if iso != "N/A" else "ISO N/A")
-    parts.append(f"{fl}mm" if fl != "N/A" else "N/Amm")
-    parts.append(fn)
-    parts.append(ss)
-
-    return "  |  ".join([p for p in parts if p])
-
-
 def read_exif_selected(image_path: Path) -> dict:
     exif = _get_exif_dict_pillow(image_path)
     if exif:
@@ -177,43 +158,50 @@ def read_exif_selected(image_path: Path) -> dict:
         }
 
 
-def _apply_aspect_padding(image: Image.Image, aspect: str | None) -> Image.Image:
-    if not aspect:
-        return image
+def _load_font(size: int) -> ImageFont.FreeTypeFont:
+    try:
+        return ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Unicode.ttf", size)
+    except Exception:
+        return ImageFont.load_default()
 
-    if aspect not in ASPECT_RATIOS:
-        print(f"[ASPECT] Unknown aspect: {aspect} (ignored)")
-        return image
 
-    aw, ah = ASPECT_RATIOS[aspect]
-    target_ratio = aw / ah
+def _line_height(font: ImageFont.ImageFont) -> int:
+    # ascent + descent を「行ボックス」として扱う（見た目の上下差が出にくい）
+    try:
+        ascent, descent = font.getmetrics()
+        return int(ascent + descent)
+    except Exception:
+        # fallback
+        return int(getattr(font, "size", 14))
 
-    w, h = image.size
-    current_ratio = w / h
 
-    if abs(current_ratio - target_ratio) < 1e-6:
-        print(f"[ASPECT] Already target ratio: {aspect}")
-        return image
+def _build_exif_lines(selected: dict) -> tuple[str, str, str]:
+    # 構成：機種名 → 日付 → 詳細
+    model = selected.get("Camera Model", "N/A")
+    date = selected.get("Date", "N/A")
 
-    if current_ratio > target_ratio:
-        new_h = int(round(w / target_ratio))
-        new_w = w
-    else:
-        new_w = int(round(h * target_ratio))
-        new_h = h
+    fl = selected.get("Focal Length (mm)", "N/A")
+    iso = selected.get("ISO", "N/A")
+    fn = selected.get("F-Number", "N/A")
+    ss = selected.get("Shutter Speed (s)", "N/A")
 
-    if new_w < w:
-        new_w = w
-    if new_h < h:
-        new_h = h
+    parts = []
+    parts.append(f"{fl}mm" if fl != "N/A" else "N/Amm")
+    parts.append(f"ISO{iso}" if iso != "N/A" else "ISO N/A")
+    parts.append(fn)
+    parts.append(ss)
 
-    print(f"[ASPECT] Apply {aspect}: ({w}x{h}) -> ({new_w}x{new_h})")
+    details = "  ".join([p for p in parts if p])
+    return model, date, details
 
-    canvas = Image.new("RGB", (new_w, new_h), (255, 255, 255))
-    x = (new_w - w) // 2
-    y = (new_h - h) // 2
-    canvas.paste(image, (x, y))
-    return canvas
+
+def _parse_aspect(argv: list[str]) -> str | None:
+    if "--aspect" not in argv:
+        return None
+    i = argv.index("--aspect")
+    if i + 1 >= len(argv):
+        return None
+    return argv[i + 1]
 
 
 def add_frame_and_text(input_path: Path, output_path: Path, aspect: str | None):
@@ -237,62 +225,131 @@ def add_frame_and_text(input_path: Path, output_path: Path, aspect: str | None):
     for k, v in selected.items():
         print(f"[EXIF] {k}: {v}")
 
-    overlay_text = _build_overlay_text(selected)
-
-    w, h = img.size
-    pad_lr = int(max(w, h) * 0.04)
-    pad_top = int(max(w, h) * 0.04)
-    pad_bottom = int(max(w, h) * 0.12)
-
-    new_w = w + pad_lr * 2
-    new_h = h + pad_top + pad_bottom
-
-    framed = Image.new("RGB", (new_w, new_h), (255, 255, 255))
-    framed.paste(img, (pad_lr, pad_top))
-
-    draw = ImageDraw.Draw(framed)
-
-    font_size = max(12, int(max(w, h) * 0.028))
-    try:
-        font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial Unicode.ttf", font_size)
-    except Exception:
-        font = ImageFont.load_default()
-
-    bbox = draw.textbbox((0, 0), overlay_text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-
-    x = (new_w - text_w) // 2
-    y = h + pad_top + (pad_bottom - text_h) // 2
-
-    draw.text((x, y), overlay_text, fill=(0, 0, 0), font=font)
-
     if aspect:
         print(f"[ASPECT] Requested: {aspect}")
     else:
         print("[ASPECT] Requested: (none)")
 
-    final_img = _apply_aspect_padding(framed, aspect)
+    # ---- 3段テキスト（機種名→日付→詳細） ----
+    model_line, date_line, details_line = _build_exif_lines(selected)
+
+    w, h = img.size
+    base = max(w, h)
+
+    # 左右余白（外枠）
+    pad_lr = int(base * 0.04)
+
+    # フォントサイズ：機種名 > 日付 = その他
+    model_size = max(14, int(base * 0.032))
+    other_size = max(12, int(base * 0.026))
+
+    font_model = _load_font(model_size)
+    font_date = _load_font(other_size)
+    font_details = _load_font(other_size)
+
+    # 行間：もう少し広く
+    line_gap = max(12, int(base * 0.016))
+
+    # 行ボックス高さ
+    lh_model = _line_height(font_model)
+    lh_date = _line_height(font_date)
+    lh_details = _line_height(font_details)
+
+    # テキストブロック高さ（行ボックス基準）
+    block_h = lh_model + line_gap + lh_date + line_gap + lh_details
+
+    # ✅ あなたの定義する「EXIF上下余白」を固定（上部=下部）
+    # 上部=画像下端〜1行目行ボックス上端
+    # 下部=最終行行ボックス下端〜出力画像下端
+    exif_pad_min = int(base * 0.035)
+    exif_pad = max(exif_pad_min, int(other_size * 1.4))
+
+    # 画像上の外側余白（ここは「EXIF上下余白」ではない）
+    top_outer = int(base * 0.04)
+
+    # ---- まず「比率を考慮しない最小キャンバス」寸法を作る ----
+    min_w = w + pad_lr * 2
+    min_h = top_outer + h + exif_pad + block_h + exif_pad
+
+    # ---- 比率指定があれば、最終キャンバスをその比率に拡張（外側余白を作らない） ----
+    final_w = min_w
+    final_h = min_h
+
+    if aspect and aspect in ASPECT_RATIOS:
+        aw, ah = ASPECT_RATIOS[aspect]
+        ratio = aw / ah
+
+        # min_w / min_h と ratio を比較して、どちらかを増やす（トリミングなし）
+        if (min_w / min_h) > ratio:
+            # 横長すぎ → 高さを増やす
+            target_h = int(ceil(min_w / ratio))
+            extra_h = target_h - min_h
+            # ✅ 外側に足すのではなく、EXIF上下余白に均等に配分して「上下余白の定義」を崩さない
+            add_each = extra_h // 2
+            exif_pad = exif_pad + add_each
+            # 余りが出たら下側に1足す（見た目優先で僅差をなくす）
+            remainder = extra_h - add_each * 2
+
+            final_w = min_w
+            final_h = top_outer + h + exif_pad + block_h + exif_pad + remainder
+        else:
+            # 縦長すぎ → 幅を増やす（左右に足す：EXIF上下余白には影響しない）
+            target_w = int(ceil(min_h * ratio))
+            extra_w = target_w - min_w
+            add_lr = extra_w // 2
+            remainder = extra_w - add_lr * 2
+            pad_lr = pad_lr + add_lr
+            final_w = w + pad_lr * 2 + remainder
+            final_h = min_h
+    else:
+        final_w = min_w
+        final_h = min_h
+
+    print(f"[LAYOUT] pad_lr={pad_lr} top_outer={top_outer} exif_pad={exif_pad} line_gap={line_gap}")
+    print(f"[LAYOUT] min=({min_w}x{min_h}) final=({final_w}x{final_h}) block_h={block_h}")
+
+    # ---- 描画開始 ----
+    canvas = Image.new("RGB", (final_w, final_h), (255, 255, 255))
+
+    img_x = pad_lr
+    img_y = top_outer
+    canvas.paste(img, (img_x, img_y))
+
+    draw = ImageDraw.Draw(canvas)
+
+    # テキストブロック開始（あなた定義の上部余白 = exif_pad）
+    block_top = img_y + h + exif_pad
+
+    cx = final_w // 2
+
+    # 各行の中心Yを決める（anchor="mm"で行ボックス中央に配置）
+    y_model_c = block_top + (lh_model // 2)
+    y_date_c = block_top + lh_model + line_gap + (lh_date // 2)
+    y_details_c = block_top + lh_model + line_gap + lh_date + line_gap + (lh_details // 2)
+
+    # Pillowのanchorを使って確実に中央揃え
+    draw.text((cx, y_model_c), model_line, fill=(0, 0, 0), font=font_model, anchor="mm")
+    draw.text((cx, y_date_c), date_line, fill=(0, 0, 0), font=font_date, anchor="mm")
+    draw.text((cx, y_details_c), details_line, fill=(0, 0, 0), font=font_details, anchor="mm")
+
+    # デバッグ（あなたの定義の余白が一致することを数値で出す）
+    top_exif_margin = block_top - (img_y + h)
+    bottom_exif_margin = final_h - (block_top + block_h)
+    print(f"[MARGIN] top_exif={top_exif_margin} bottom_exif={bottom_exif_margin}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     save_kwargs = {"quality": 95}
     if exif_bytes:
         save_kwargs["exif"] = exif_bytes
-    final_img.save(output_path, **save_kwargs)
-
-
-def _parse_aspect(argv: list[str]) -> str | None:
-    if "--aspect" not in argv:
-        return None
-    i = argv.index("--aspect")
-    if i + 1 >= len(argv):
-        return None
-    return argv[i + 1]
+    canvas.save(output_path, **save_kwargs)
 
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python main.py <input_image> <output_image> [--aspect 16:9|9:16|4:3|3:4|5:4|4:5|1:1]")
+        print(
+            "Usage: python main.py <input_image> <output_image> "
+            "[--aspect 16:9|9:16|4:3|3:4|5:4|4:5|1:1]"
+        )
         sys.exit(1)
 
     input_path = Path(sys.argv[1])
